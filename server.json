@@ -1,0 +1,28 @@
+{
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "io.github.andreasjhagen/media-file-converter",
+    "description": "MCP server that converts images, audio and video files between formats using ffmpeg",
+    "version": "1.0.1",
+    "icons": [
+        {
+            "src": "https://raw.githubusercontent.com/andreasjhagen/OpenAgent-MCPs/main/mcp-media-file-converter/icon.png",
+            "mimeType": "image/png"
+        }
+    ],
+    "packages": [
+        {
+            "registryType": "npm",
+            "identifier": "@cynosure-mcp/media-file-converter",
+            "version": "1.0.1",
+            "transport": {
+                "type": "stdio"
+            },
+            "environmentVariables": []
+        }
+    ],
+    "repository": {
+        "url": "https://github.com/andreasjhagen/OpenAgent-MCPs",
+        "source": "github",
+        "subfolder": "mcp-media-file-converter"
+    }
+}
