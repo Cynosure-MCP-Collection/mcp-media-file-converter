@@ -137,7 +137,7 @@ const server = new McpServer({
     version: '1.0.0',
     title: 'Media File Converter',
     description: 'Convert images, audio, and video files between formats using ffmpeg.',
-    icons: [{ src: 'https://raw.githubusercontent.com/andreasjhagen/OpenAgent-MCPs/main/mcp-media-file-converter/icon.png', mimeType: 'image/png' }],
+    icons: [{ src: 'https://raw.githubusercontent.com/andreasjhagen/Cynosure-MCPs/main/mcp-media-file-converter/icon.png', mimeType: 'image/png' }],
 });
 
 // ── Tool: convert_media ────────────────────────────────────────────────────────
