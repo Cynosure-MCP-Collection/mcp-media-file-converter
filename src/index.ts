@@ -145,6 +145,7 @@ const server = new McpServer({
 server.registerTool(
     'convert_media',
     {
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
         description: `Convert a media file (image, audio, or video) to a different format using ffmpeg.
 Supported image formats: ${SUPPORTED_FORMATS.image.join(', ')}
 Supported audio formats: ${SUPPORTED_FORMATS.audio.join(', ')}
@@ -242,6 +243,7 @@ Supported video formats: ${SUPPORTED_FORMATS.video.join(', ')}`,
 server.registerTool(
     'get_media_info',
     {
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         description: 'Probe a media file and return its metadata: format, duration, resolution, codecs, bitrate, etc.',
         inputSchema: {
             file_path: z.string().describe('Absolute path to the media file to probe'),
@@ -303,6 +305,7 @@ server.registerTool(
 server.registerTool(
     'extract_audio',
     {
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
         description: 'Extract the audio track from a video file and save it as a separate audio file.',
         inputSchema: {
             input_path: z.string().describe('Absolute path to the video file'),
