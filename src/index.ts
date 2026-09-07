@@ -51,6 +51,21 @@ function buildOutputPath(inputPath: string, targetFormat: string, outputDir?: st
     return path.join(dir, `${baseName}.${targetFormat}`);
 }
 
+/** Check whether output and input paths point to the same file (case-insensitive on extension, normalized). */
+function isSamePath(a: string, b: string): boolean {
+    return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+}
+
+/** Build a default output path that never collides with the input path. */
+function buildSafeOutputPath(inputPath: string, targetFormat: string, outputDir?: string): string {
+    const defaultPath = buildOutputPath(inputPath, targetFormat, outputDir);
+    if (!isSamePath(defaultPath, inputPath)) return defaultPath;
+    // Same-format conversion: avoid overwriting the original by suffixing "-converted"
+    const dir = outputDir || path.dirname(inputPath);
+    const baseName = path.basename(inputPath, path.extname(inputPath));
+    return path.join(dir, `${baseName}-converted.${targetFormat}`);
+}
+
 /** Probe a media file and return its metadata. */
 function probeFile(filePath: string): Promise<ffmpeg.FfprobeData> {
     return new Promise((resolve, reject) => {
@@ -111,12 +126,11 @@ function runConversion(
 
         // Resize (applies to both image and video)
         if (options.width || options.height) {
-            const w = options.width || -1;
-            const h = options.height || -1;
-            // Use -2 instead of -1 to ensure even dimensions for video codecs
-            const safeW = w === -1 ? -2 : w;
-            const safeH = h === -1 ? -2 : h;
-            cmd = cmd.size(`${safeW}x${safeH}`);
+            const w = options.width || -2;
+            const h = options.height || -2;
+            // Use the scale filter: unlike -s, it supports -1/-2 for aspect-ratio-preserving auto-dimension
+            // (-2 keeps the dimension even, required by most video codecs)
+            cmd = cmd.videoFilters([`scale=${w}:${h}`]);
         }
 
         // Overwrite existing output
@@ -145,7 +159,7 @@ const server = new McpServer({
 server.registerTool(
     'convert_media',
     {
-        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
         description: `Convert a media file (image, audio, or video) to a different format using ffmpeg.
 Supported image formats: ${SUPPORTED_FORMATS.image.join(', ')}
 Supported audio formats: ${SUPPORTED_FORMATS.audio.join(', ')}
@@ -158,7 +172,7 @@ Supported video formats: ${SUPPORTED_FORMATS.video.join(', ')}`,
             output_path: z
                 .string()
                 .optional()
-                .describe('Optional custom output path. Defaults to same directory with new extension'),
+                .describe('Optional custom output path. Defaults to same directory with new extension (suffixed "-converted" if it would collide with the input file). Must differ from input_path'),
             quality: z
                 .number()
                 .min(1)
@@ -202,7 +216,19 @@ Supported video formats: ${SUPPORTED_FORMATS.video.join(', ')}`,
             const resolvedInput = await resolveInputPath(input_path);
             const resolvedOutput = output_path
                 ? path.resolve(output_path)
-                : buildOutputPath(resolvedInput, format);
+                : buildSafeOutputPath(resolvedInput, format);
+
+            if (isSamePath(resolvedOutput, resolvedInput)) {
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: `Error: output path (${resolvedOutput}) must differ from input path (${resolvedInput}). Converting in place would overwrite the original file.`,
+                        },
+                    ],
+                    isError: true,
+                };
+            }
 
             // Ensure output directory exists
             await fs.mkdir(path.dirname(resolvedOutput), { recursive: true });
@@ -305,7 +331,7 @@ server.registerTool(
 server.registerTool(
     'extract_audio',
     {
-        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
         description: 'Extract the audio track from a video file and save it as a separate audio file.',
         inputSchema: {
             input_path: z.string().describe('Absolute path to the video file'),
@@ -333,7 +359,19 @@ server.registerTool(
             const resolvedInput = await resolveInputPath(input_path);
             const resolvedOutput = output_path
                 ? path.resolve(output_path)
-                : buildOutputPath(resolvedInput, format);
+                : buildSafeOutputPath(resolvedInput, format);
+
+            if (isSamePath(resolvedOutput, resolvedInput)) {
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: `Error: output path (${resolvedOutput}) must differ from input path (${resolvedInput}).`,
+                        },
+                    ],
+                    isError: true,
+                };
+            }
 
             await fs.mkdir(path.dirname(resolvedOutput), { recursive: true });
 
