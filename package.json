@@ -1,7 +1,7 @@
 {
   "name": "@cynosure-mcp/media-file-converter",
   "mcpName": "io.github.andreasjhagen/media-file-converter",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "MCP server that converts images, audio and video files between formats using ffmpeg",
   "type": "module",
   "main": "dist/index.js",
