@@ -8,10 +8,13 @@ import ffmpegPath from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { spawn } from 'node:child_process';
 
 // ── Configure ffmpeg paths ─────────────────────────────────────────────────────
 
-if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath as unknown as string);
+const bundledFfmpegPath = ffmpegPath as unknown as string | null;
+
+if (bundledFfmpegPath) ffmpeg.setFfmpegPath(bundledFfmpegPath);
 ffmpeg.setFfprobePath((ffprobeStatic as { path: string }).path);
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -24,6 +27,7 @@ const SUPPORTED_FORMATS: Record<string, string[]> = {
 };
 
 const ALL_FORMATS = [...new Set(Object.values(SUPPORTED_FORMATS).flat())];
+const MAX_COMMAND_OUTPUT_LENGTH = 1024 * 1024;
 
 function getMediaType(format: string): 'image' | 'audio' | 'video' | null {
     const f = format.toLowerCase();
@@ -72,6 +76,77 @@ function probeFile(filePath: string): Promise<ffmpeg.FfprobeData> {
         ffmpeg.ffprobe(filePath, (err, data) => {
             if (err) reject(new Error(`Failed to probe file: ${err.message}`));
             else resolve(data);
+        });
+    });
+}
+
+interface CustomCommandResult {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+    outputTruncated: boolean;
+}
+
+/** Append process output while retaining the most recent, diagnostically useful text. */
+function appendCommandOutput(current: string, chunk: Buffer): { output: string; truncated: boolean } {
+    const combined = current + chunk.toString('utf8');
+    if (combined.length <= MAX_COMMAND_OUTPUT_LENGTH) {
+        return { output: combined, truncated: false };
+    }
+    return {
+        output: combined.slice(-MAX_COMMAND_OUTPUT_LENGTH),
+        truncated: true,
+    };
+}
+
+/** Run the bundled ffmpeg binary directly, without shell interpretation. */
+function runCustomCommand(args: string[], workingDirectory: string, timeoutSeconds: number): Promise<CustomCommandResult> {
+    return new Promise((resolve, reject) => {
+        if (!bundledFfmpegPath) {
+            reject(new Error('The bundled ffmpeg binary is unavailable on this platform.'));
+            return;
+        }
+
+        const child = spawn(bundledFfmpegPath, args, {
+            cwd: workingDirectory,
+            shell: false,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+        });
+
+        let stdout = '';
+        let stderr = '';
+        let outputTruncated = false;
+        let timedOut = false;
+
+        child.stdout.on('data', (chunk: Buffer) => {
+            const result = appendCommandOutput(stdout, chunk);
+            stdout = result.output;
+            outputTruncated ||= result.truncated;
+        });
+        child.stderr.on('data', (chunk: Buffer) => {
+            const result = appendCommandOutput(stderr, chunk);
+            stderr = result.output;
+            outputTruncated ||= result.truncated;
+        });
+
+        const timeout = setTimeout(() => {
+            timedOut = true;
+            child.kill('SIGKILL');
+        }, timeoutSeconds * 1000);
+
+        child.once('error', (err) => {
+            clearTimeout(timeout);
+            reject(new Error(`Failed to start ffmpeg: ${err.message}`));
+        });
+        child.once('close', (exitCode, signal) => {
+            clearTimeout(timeout);
+            if (timedOut) {
+                reject(new Error(`ffmpeg command timed out after ${timeoutSeconds} seconds.${stderr ? `\n${stderr}` : ''}`));
+                return;
+            }
+            resolve({ exitCode, signal, stdout, stderr, outputTruncated });
         });
     });
 }
@@ -396,6 +471,61 @@ server.registerTool(
                         text: `Successfully extracted audio.\nInput: ${resolvedInput}\nOutput: ${resolvedOutput}\nFormat: ${format}\nSize: ${sizeMB} MB`,
                     },
                 ],
+            };
+        } catch (err) {
+            return {
+                content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+                isError: true,
+            };
+        }
+    },
+);
+
+// ── Tool: run_ffmpeg ──────────────────────────────────────────────────────────
+
+server.registerTool(
+    'run_ffmpeg',
+    {
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+        description: `Run a custom command with this server's bundled ffmpeg binary. Pass only the arguments that follow "ffmpeg" as separate array items. The command runs without a shell or interactive stdin. Include options such as "-y" explicitly when needed.`,
+        inputSchema: {
+            arguments: z
+                .array(z.string())
+                .min(1)
+                .describe('FFmpeg arguments as separate items, for example ["-i", "/input.mp4", "-vn", "/output.mp3"]'),
+            working_directory: z
+                .string()
+                .optional()
+                .describe('Working directory used to resolve relative paths. Defaults to the MCP server process directory'),
+            timeout_seconds: z
+                .number()
+                .int()
+                .min(1)
+                .max(3600)
+                .default(300)
+                .describe('Maximum command duration in seconds (default 300, maximum 3600)'),
+        },
+    },
+    async ({ arguments: args, working_directory, timeout_seconds }) => {
+        try {
+            const workingDirectory = path.resolve(working_directory || process.cwd());
+            const directoryStats = await fs.stat(workingDirectory);
+            if (!directoryStats.isDirectory()) {
+                throw new Error(`Working directory is not a directory: ${workingDirectory}`);
+            }
+
+            const result = await runCustomCommand(args, workingDirectory, timeout_seconds);
+            const sections = [
+                `ffmpeg exited with code ${result.exitCode ?? 'null'}${result.signal ? ` (signal: ${result.signal})` : ''}.`,
+                `Working directory: ${workingDirectory}`,
+            ];
+            if (result.outputTruncated) sections.push(`Output was truncated to the last ${MAX_COMMAND_OUTPUT_LENGTH} characters per stream.`);
+            if (result.stdout) sections.push(`stdout:\n${result.stdout.trimEnd()}`);
+            if (result.stderr) sections.push(`stderr:\n${result.stderr.trimEnd()}`);
+
+            return {
+                content: [{ type: 'text', text: sections.join('\n\n') }],
+                isError: result.exitCode !== 0,
             };
         } catch (err) {
             return {
