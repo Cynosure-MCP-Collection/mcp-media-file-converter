@@ -227,6 +227,8 @@ const server = new McpServer({
     title: 'Media File Converter',
     description: 'Convert images, audio, and video files between formats using ffmpeg.',
     icons: [{ src: 'https://unpkg.com/@cynosure-mcp/media-file-converter@1.0.4/icon.png', mimeType: 'image/png' }],
+}, {
+    instructions: `Pass absolute file paths. Call get_media_info first when the right settings depend on the source (duration, resolution, codecs, audio streams). Use convert_media for format changes and resizing, and extract_audio to pull a soundtrack out of a video. Without output_path the result is written next to the input with the new extension. Existing files at the output path are overwritten without asking, so pick a fresh output_path when a file of that name may already exist. Conversions run until done, so long videos can take minutes. Use run_ffmpeg only for what the other tools cannot do, such as trimming, concatenating, or filters; pass the arguments after "ffmpeg" as separate items and include -y to overwrite.`,
 });
 
 // ── Tool: convert_media ────────────────────────────────────────────────────────
